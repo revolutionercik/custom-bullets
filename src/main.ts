@@ -34,7 +34,7 @@ export default class CustomBulletsPlugin extends Plugin {
   }
 
   // Returns true if we handled the event (consume it), false to let Obsidian's default run.
-  // TODO: Handle cases if pressed enter inside text (for now you can workaround this by using)
+  // TODO: Handle cases if pressed enter inside text (for now you can workaround this by using Shift+Enter)
   handleEnter(): boolean {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return false;
