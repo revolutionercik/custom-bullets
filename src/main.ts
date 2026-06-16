@@ -46,6 +46,11 @@ export default class CustomBulletsPlugin extends Plugin {
     const matched = this.settings.bullets.find(bullet => text.startsWith(bullet));
     if (!matched) return false;
 
+
+    //dev
+    // const space2visual = (value: string) => value.replace(/ /g, "␣").replace(/‎/g, "∅");
+    // console.log(space2visual(matched));
+
     const suffix = text.slice(matched.length);
 
     if (NATIVE_BULLETS.contains(matched)) {
@@ -156,8 +161,11 @@ class SettingTab extends PluginSettingTab {
       }
     }
 
-    const space2visual = (value: string) => value.replace(/ /g, "␣");
-    const visual2space = (value: string) => value.replace(/␣/g, " ");
+    const space2visual = (value: string) => value.replace(/ /g, "␣").replace(/‎/g, "∅");
+    const visual2space = (value: string) => {
+      // console.log(value.replace(/␣/g, " ").replace(/∅/g, "‎")) // dev
+      return value.replace(/␣/g, " ").replace(/∅/g, "‎");
+    }
 
     const render = () => {
       listContainer.empty(); // reset view (listContainer.innerHTML = '')
@@ -272,4 +280,3 @@ class SettingTab extends PluginSettingTab {
     `;
   }
 }
-
