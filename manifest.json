@@ -1,7 +1,7 @@
 {
   "id": "custom-bullets",
   "name": "Custom Bullets",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "minAppVersion": "1.0.0",
   "description": "A lightweight plugin that allows to add additional bullet point types to those already available in Obsidian.",
   "author": "revolutionercik",

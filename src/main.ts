@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Plugin, PluginSettingTab, Setting, App } from "obsidian";
+import { Editor, MarkdownView, Plugin, PluginSettingTab, Setting, App, setIcon } from "obsidian";
 import { keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 
@@ -7,20 +7,30 @@ interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  bullets: ["\\> "],
+  bullets: ["\\> ", '-'],
 };
 
 const NATIVE_BULLETS = ['-', '*', '+'];
+const INVISIBLE = ['‎']
 
 export default class CustomBulletsPlugin extends Plugin {
   settings!: Settings;
 
+  async loadSettings() {
+    this.settings = Object.assign({} /* empty object */, await this.loadData() ?? DEFAULT_SETTINGS);
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
+
   async onload() {
     await this.loadSettings();
+
     this.addSettingTab(new SettingTab(this.app, this));
 
     // Hook directly into CodeMirror with highest precedence so we run
-    // before Obsidian's own Enter handler.
+    // before Obsidian's own Enter handler
     this.registerEditorExtension(
       Prec.highest(
         keymap.of([
@@ -33,55 +43,57 @@ export default class CustomBulletsPlugin extends Plugin {
     );
   }
 
+  // Mimic native new line  behaviour + our additional logic
   // Returns true if we handled the event (consume it), false to let Obsidian's default run.
-  // TODO: Handle cases if pressed enter inside text (for now you can workaround this by using Shift+Enter)
   handleEnter(): boolean {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return false;
 
     const editor: Editor = view.editor;
     const cursor = editor.getCursor();
-    const text = editor.getLine(cursor.line);
 
-    const matched = this.settings.bullets.find(bullet => text.startsWith(bullet));
-    if (!matched) return false;
-
-
-    //dev
-    // const space2visual = (value: string) => value.replace(/ /g, "␣").replace(/‎/g, "∅");
-    // console.log(space2visual(matched));
-
-    const suffix = text.slice(matched.length);
-
-    if (NATIVE_BULLETS.contains(matched)) {
-      if (suffix !== suffix.trimStart()) return false; // Handle cases 
+    if (cursor.ch === 0) { // ignore custom logic on ch 0
+      return false;
     }
 
-    if (suffix.trim() === '') {
-      // Empty prefix line - clear it and insert a normal newline.
+    const lineText = editor.getLine(cursor.line);
+
+    const caught = this.settings.bullets.find(bullet => lineText.startsWith(bullet));
+    if (!caught) return false; // didn't catch any of the bullets, end our custom logic
+
+    const text = lineText.slice(caught.length); // get suffix (text minus the bullet)
+
+    // Check for native bullet syntax
+    // (if bullet syntax symbol is native and it has trailing spaces we bail) TODO: learn what bail means
+    if (NATIVE_BULLETS.contains(caught)) {
+      if (text !== text.trimStart()) return false; 
+    }
+
+    // If line text is native separator syntax ('---') and caught is '-'
+    if (caught === '-' && /--+/.test(text)) return false;
+
+    // if text is empty we clear the line
+    if (text.trim() === '') {
       editor.setLine(cursor.line, '');
+    } 
+    else {
+      const remaining = lineText.slice(cursor.ch); // text after cursor's pos to append on next line 
 
-    } else {
-      // Has content — continue prefix on next line.
-      const pos = { line: cursor.line, ch: text.length };
-      editor.replaceRange("\n" + matched, pos);
+      // it has content, append new line with the bullet symbol
+      const pos = { line: cursor.line, ch: lineText.length };
+      editor.replaceRange("\n" + caught + remaining, pos);
 
-      editor.setCursor({ line: cursor.line + 1, ch: matched.length });
+      editor.setLine(cursor.line, lineText.slice(0, cursor.ch)); // set line with line text up to cursor's pos
+      
+      editor.setCursor({ line: cursor.line + 1, ch: caught.length/*  + remaining.length */});
     }
 
     return true; // Consume obsidian's logic for Enter
   }
-
-  async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  }
-
-  async saveSettings() {
-    await this.saveData(this.settings);
-  }
 }
 
 class SettingTab extends PluginSettingTab {
+
   plugin: CustomBulletsPlugin;
 
   constructor(app: App, plugin: CustomBulletsPlugin) {
@@ -91,13 +103,21 @@ class SettingTab extends PluginSettingTab {
 
   display(): void {
     const { containerEl } = this;
+    containerEl.empty(); // empty to get ready for new render
 
-    const bullets = this.plugin.settings.bullets; // alias
+    // set style
+    const style = containerEl.createEl("style");
+    style.textContent = `
+      .cb-list { margin-bottom: 12px; }
+      .cb-list-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+    `;
 
-    containerEl.empty();
+    const space2visual = (value: string) => value.replace(/ /g, "␣").replace(/‎/g, "∅");
+    const visual2space = (value: string) => value.replace(/␣/g, " ").replace(/∅/g, "‎");
 
-    // containerEl.createEl("h2", { text: this.plugin.manifest.name });
-    const descEl = containerEl.createEl("p", { cls: "setting-item-description" });
+    const cachedBullets = this.plugin.settings.bullets; // alias
+
+    const descEl = containerEl.createEl("p", { cls: "cb-setting-description" });
     descEl.innerHTML = 
     `
     Lines starting with these prefixes are treated as custom list bullets and follow standard list behavior:
@@ -105,7 +125,7 @@ class SettingTab extends PluginSettingTab {
     Whitespaces (␣) should be declared explicitly.
     `;
 
-    const listContainer = containerEl.createDiv({ cls: "auto-continue-list" });
+    const listContainer = containerEl.createDiv({ cls: "cb-list" });
 
     let addBtn: HTMLButtonElement;
     let errorText: HTMLSpanElement;
@@ -161,22 +181,63 @@ class SettingTab extends PluginSettingTab {
       }
     }
 
-    const space2visual = (value: string) => value.replace(/ /g, "␣").replace(/‎/g, "∅");
-    const visual2space = (value: string) => {
-      // console.log(value.replace(/␣/g, " ").replace(/∅/g, "‎")) // dev
-      return value.replace(/␣/g, " ").replace(/∅/g, "‎");
-    }
-
+    // Render updated view
     const render = () => {
       listContainer.empty(); // reset view (listContainer.innerHTML = '')
 
-      bullets.forEach((bullet, i) => {
-        const row = listContainer.createDiv({ cls: "auto-continue-row" });
+      // for each cached bullet
+      cachedBullets.forEach((bullet, i) => {
 
+        const row = listContainer.createDiv({ cls: "cb-list-row" });
+
+        // temp
+        if (false) {
+        // const reorderHandle = row.createEl("span", {
+        //   cls: "drag-handle",
+        //   attr: { draggable: "true" }
+        // });
+        // setIcon(reorderHandle, "grip-vertical");
+
+        // reorderHandle.addEventListener("dragstart", (e) => {
+        //   e.dataTransfer?.setData("text/plain", String(i));
+        //   e.dataTransfer!.effectAllowed = "move";
+        //   row.classList.add("is-dragging");
+        // });
+
+        // reorderHandle.addEventListener("dragend", () => {
+        //   row.classList.remove("is-dragging");
+        // });
+
+        // row.addEventListener("dragover", (e) => {
+        //   e.preventDefault(); // without this, "drop" never fires, browsers block it by default
+        //   row.classList.add("drag-over");
+        // });
+
+        // row.addEventListener("dragleave", () => {
+        //   row.classList.remove("drag-over");
+        // });
+
+        // row.addEventListener("drop", (e) => {
+        //   e.preventDefault();
+        //   row.classList.remove("drag-over");
+
+        //   const fromIndex = Number(e.dataTransfer?.getData("text/plain"));
+        //   const toIndex = i;
+        //   if (fromIndex === toIndex || Number.isNaN(fromIndex)) return;
+
+        //   const newBullets = [...bullets];
+        //   const [moved] = newBullets.splice(fromIndex, 1);
+        //   newBullets.splice(toIndex, 0, moved);
+
+        //   // onReorder(newBullets);
+        //   render();
+        // });
+        }
+        
         input = row.createEl("input", { type: "text", value: space2visual(bullet) });
         input.style.cssText = "flex:1; font-family:monospace; padding:4px 8px;";
         
-        if (bullets.length === 1 && i == 0) {
+        if (cachedBullets.length === 0) {
           input.placeholder = "e.g. '\\>␣' or '-'";
         }
 
@@ -193,11 +254,13 @@ class SettingTab extends PluginSettingTab {
             }
           }
 
-          const pos = input.selectionStart ?? input.value.length;
           input.value = space2visual(input.value);
 
           // input.value = space2visual(visual2space(input.value)); // also looks
-          // input.setSelectionRange(pos, pos); // I am not sure why we need this
+
+          // I am not sure why we need this
+          // const pos = input.selectionStart ?? input.value.length;
+          // input.setSelectionRange(pos, pos);
         });
 
         /* input.addEventListener("blur", (event) => {
@@ -212,7 +275,7 @@ class SettingTab extends PluginSettingTab {
           if (errorNum !== 0) return;
 
           // Save to bullets
-          bullets[i] = visual2space(input.value);
+          cachedBullets[i] = visual2space(input.value);
           await this.plugin.saveSettings();
         });
 
@@ -238,7 +301,7 @@ class SettingTab extends PluginSettingTab {
             errorText.style.display = "none";
           }
 
-          bullets.splice(i, 1);
+          cachedBullets.splice(i, 1);
           await this.plugin.saveSettings();
           render();
         });
@@ -264,7 +327,7 @@ class SettingTab extends PluginSettingTab {
             return;
           }
 
-          bullets.push('');
+          cachedBullets.push('');
           await this.plugin.saveSettings();
           render();
 
@@ -272,11 +335,5 @@ class SettingTab extends PluginSettingTab {
         });
       }
     );
-
-    const style = containerEl.createEl("style");
-    style.textContent = `
-      .auto-continue-list { margin-bottom: 12px; }
-      .auto-continue-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-    `;
   }
 }
